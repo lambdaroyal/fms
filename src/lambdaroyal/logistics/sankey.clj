@@ -3,14 +3,16 @@
 (ns lambdaroyal.logistics.sankey 
   (:use [c2.core :only [unify]])
   (:require [c2.scale :as scale])
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set])
+  (:import [org.lambdaroyal.util ConsoleProgress])
+  )
 
 
 (def ^{:doc "used for rendering the bubbles representing the various articles in the areas"} article-colors
   ["#c04c01" "#c08301" "#c0c001" "#72c001"])
 
 (def ^:const invariants
-  {:curve-radius 20
+  {:curve-radius 10
    :bottom-inset 70})
 
 ;; definition of goods flow
@@ -120,6 +122,13 @@
     }}))
 
 
+;;visualize genetic optimization progress
+(def progress (ConsoleProgress. \-))
+(def progress-agent (agent 0))
+(def ! (add-watch progress-agent :foo 
+             (fn [k r o n]
+               (.showProgress progress "genetic optimization of pathes" n))))
+
 ;;genetic algorithm
 ;;consists of
 ;;1. domain abstraction: map of keys to finite value ranges. each value range represents the possible values of a domain.
@@ -137,7 +146,8 @@
   (mutation [this selected-population])
   (crossover [this mutated-population]))
 
-(deftype TGa [^:unsynchronized-mutable state ^clojure.lang.PersistentArrayMap domain size fn-fitness max-round p-mutation p-crossover]
+
+(deftype TGa [^:unsynchronized-mutable state ^clojure.lang.PersistentArrayMap domain size fn-fitness max-round p-mutation p-crossover progress]
   clojure.lang.IDeref
   (deref [sc]
     (locking sc
@@ -145,18 +155,23 @@
           (set! state
                 (loop [round 0 current-pop (population sc)]
                   (let [sorted-pop (sort-population sc current-pop)
-                        ! (comment (println :sorted-pop sorted-pop))
                         selected-pop (selection sc sorted-pop)
                         ! (comment (println :selected-pop selected-pop))
                         mutated-pop (mutation sc selected-pop)
                         ! (comment (println :mutated-pop mutated-pop))
-                        crossover-pop (crossover sc mutated-pop)]
+                        crossover-pop (crossover sc mutated-pop)
+                        ! (if
+                            (and
+                              progress
+                              (= clojure.lang.Agent (class progress)))
+                            (send-off progress #(+ % (int (Math/ceil (/ 100 max-round)))))
+                            nil)]
                     (cond
                       ;;get out
                       (= round max-round)
                         (first
                           (sort-by last
-                                   (sort-population sc crossover-pop)))
+                                  (sort-population sc crossover-pop)))
                       :else
                       (recur (inc round) crossover-pop))))))))
   PGa
@@ -225,7 +240,7 @@
                               (concat (take crossover-point i2) (drop crossover-point i1))))))))
           [] partitioned))))
 
-;;(time @(TGa. nil domain 30 (fn [x] (+ (first x) (last x))) 30 0.09 0.15
+;;(time @(TGa. nil domain 30 (fn [x] (+ (first x) (last x))) 30 0.09 0.15 nil
 ;;n))
 
 
@@ -313,12 +328,12 @@
          [from inter to])
        ;;y is the same (goldenen schnitt anwenden)
        (= (:y from) (:y to))
-       (let [diverge (/ (- (:x from) (:x to)) 4)
+       (let [diverge (/ (- (:x from) (:x to)) 3)
              diverge (if positiv diverge (- diverge))
              inter (bound-point {:x (:x from) :y (+ diverge (:y from))})]
          (vec (concat [from] (ring inter to positiv))))
        :else
-       (let [diverge (/ (- (:y from) (:y to)) 4)
+       (let [diverge (/ (- (:y from) (:y to)) 3)
              diverge (if positiv diverge (- diverge))
              inter (bound-point {:y (:y from) :x (- (:x from) diverge)})]
          (vec (concat [from] (ring inter to positiv))))))
@@ -478,22 +493,23 @@
   "calcs a reference point on the line :line with euclidic distance (with respect to :line) of (:curve-radius invariants)"
   (let [m (ascent line)
         n (if (nil? m) nil (line-n line m))
-        width (min width (line-length line))]
+        width (min width (line-length line))
+        invariant-distance (+ (:article-radius goods-flow) (/ (:article-radius goods-flow) 4))]
     (cond
       ;;up/down
       (nil? m)
       ;;check whether line is going down or up
       (if (< (-> line first :y) (-> line last :y))
         ;;down
-        {:x (-> line first :x) :y (- (-> line last :y) width (:article-radius goods-flow))}
-        {:x (-> line first :x) :y (+ (-> line last :y) width (:article-radius goods-flow))})
+        {:x (-> line first :x) :y (- (-> line last :y) width invariant-distance)}
+        {:x (-> line first :x) :y (+ (-> line last :y) width invariant-distance)})
       
       ;;left/right
       (= m 0)
       {:y (-> line last :y)
        :x (if (< (-> line first :x) (-> line last :x))
-            (- (-> line last :x) width (:article-radius goods-flow))
-            (+ (-> line last :x) width (:article-radius goods-flow)))}
+            (- (-> line last :x) width invariant-distance)
+            (+ (-> line last :x) width invariant-distance))}
 
       :else
       ;;calc reference point based on y using the negative m
@@ -506,8 +522,8 @@
             dx (Math/abs (* (Math/sin (/ (* 180 (Math/tanh m)) Math/PI)) width))
             rotated (rotation-translation {:y (-> line last :y)
                                                         :x (if (< (-> line first :x) (-> line last :x))
-                                                        (- (-> line last :x) width (:article-radius goods-flow))
-                                                        (+ (-> line last :x) width (:article-radius goods-flow)))}
+                                                        (- (-> line last :x) width invariant-distance)
+                                                        (+ (-> line last :x) width invariant-distance))}
                                                         (Math/tanh m)
                                                        (-> line last :x)
                                                        (-> line last :y))
@@ -522,14 +538,57 @@
       (assoc acc k (if (rational? v) (double v) v)))
     {} val))
 
-(defn- ring2 [from to positiv]
+(defn- ring2 [from to positive]
  "this function calculates a rectangular path from a point A to a point B on the connection line :from to :to and returns this path as vector of points"
   (let [connection-length (line-length [from to])
         reference1 (reference-point [from to] (/ connection-length 4))
         reference2 (reference-point [to from] (/ connection-length 4))]
     (concat [from]
-            (ring reference2 reference1 positiv)
+            (ring reference2 reference1 positive)
             [to])))
+
+(defn- trapez [from to positive]
+  "take a line from A to B, calcs reference Point A' (A->B) and B' (B->A) and rotates the reference point (+/-)45/-45 degress"
+  (let [length (line-length [from to])] 
+    (if
+      (> length (* 5 (:article-radius goods-flow)))
+      (let [ref-from (reference-point [to from] (/ length 4))
+          ref-to (reference-point [from to] (/ length 4))
+          ref-from (rotation-translation ref-from (if positive (/ Math/PI 4) (- (/ Math/PI 4))) (:x from) (:y from))
+          ref-to (rotation-translation ref-to (if positive (- (/ Math/PI 4)) (/ Math/PI 4)) (:x to) (:y to))]
+        [from {:x (-> ref-from first first) :y (-> ref-from second first)} {:x (-> ref-to first first) :y (-> ref-to second first)} to])
+      nil)))
+
+(defn- ext-rectangle [from to positive]
+  "takes a line from A to B, calcs an rectancle that exceeds the rectangular directly spanned by from->to"
+  (let [start (cond
+                (and (>= (:y from) (:y to)) (<= (:x from) (:x to))) :down
+                (and (>= (:y from) (:y to)) (>= (:x from) (:x to))) :right
+                (and (<= (:y from) (:y to)) (>= (:x from) (:x to))) :up
+                (and (<= (:y from) (:y to)) (<= (:x from) (:x to))) :left)
+        start (if 
+                positive    
+                start
+                ({:down :left
+                  :right :down
+                  :up :right
+                  :left :up} start))
+        stop (if
+               positive
+               ({:down :right
+                 :right :up
+                 :up :left
+                 :left :down} start)
+               ({:left :up
+                 :down :left
+                 :right :down
+                 :up :right} start))
+        length (/ (line-length [from to]) 4)
+        dx {:down 0 :up 0 :left (- length) :right length}
+        dy {:down length :up (- length) :right 0 :left 0}
+        reference1 {:x (+ (dx start) (:x from)) :y (+ (dy start) (:y from))}
+        reference2 {:x (+ (dx stop) (:x to)) :y (+ (dy stop) (:y to))}]
+    (concat [from] (ring reference1 reference2 (not positive)) [to])))
 
 (defn- article-flow-fitness [article-flow]
   "an article flow is a vec [[{}{}]..[{}{}]], of vectors each containing a line"
@@ -542,7 +601,7 @@
                                 (inc acc)
                                 acc))
                              0 line-combination-set)]
-    (+ (* 6 intersection-count) (count line-set))))
+    intersection-count))
 
 (defn- model-article-flow [xs article-flow]
   "models an article flow using xs ({area -> {article -> {:x :y}}}) and 
@@ -554,20 +613,41 @@
                          path-positive (ring (get (get xs from) article) (get (get xs to) article) true)
                          path-negative (ring (get (get xs from) article) (get (get xs to) article) false)
                          path2-positive (ring2 (get (get xs from) article) (get (get xs to) article) true)
-                         path2-negative (ring2 (get (get xs from) article) (get (get xs to) article) false)]
-                     (list article from to amount [path-straight path-positive path-negative path2-positive path2-negative])
-                     ))
+                         path2-negative (ring2 (get (get xs from) article) (get (get xs to) article) false)
+                         trapez-positive (trapez (get (get xs from) article) (get (get xs to) article) true)
+                         trapez-negative (trapez (get (get xs from) article) (get (get xs to) article) false)
+                         ext-rectangle-positive (ext-rectangle (get (get xs from) article) (get (get xs to) article) true)
+                         ext-rectangle-negative (ext-rectangle (get (get xs from) article) (get (get xs to) article) false)
+                         ;;invariants [path-straight path-positive path-negative path2-positive path2-negative ext-rectangle-positive ext-rectangle-negative]
+                         invariants [ext-rectangle-positive]
+                         m (ascent [(get (get xs from) article) (get (get xs to) article)])
+                         options (if
+                                   (or (eq? 0 m) (nil? m))
+                                   (concat invariants
+                                           [(trapez (get (get xs from) article) (get (get xs to) article) true)
+                                            (trapez (get (get xs from) article) (get (get xs to) article) false)])
+                                   invariants)
+                         ;;rounding is allowed if last line is large enought
+                         options (map
+                                   #(let [l (line-length [(-> % drop-last last) (last %)])]
+                                      (if 
+                                        (< l (* 8 (:article-radius goods-flow)))
+                                        (with-meta % {:no-rounding true})
+                                        %))
+                                   options)]
+                     (list article from to amount (vec (filter #(-> % nil? not) options)))))
                   article-flow)
+
         domain (map last stage1)
-        optimized-article-flow (time @(TGa. nil domain 4 article-flow-fitness 4 0.09 0.15))
-        ! (println optimized-article-flow)
+        ! (.showProgress progress "Start genetic optimization of pathes" 0)
+        optimized-article-flow (time @(TGa. nil domain 20 article-flow-fitness 10 0.09 0.15 progress-agent))
+        ! (println :intersections (last optimized-article-flow))
         ;;now we map back the optimized pathes into the article flow
         optimized-article-flow (map
                                  (fn [[article from to amount] v]
                                    (list article from to amount v))
                                  (map drop-last stage1)
-                                 (map (fn [i] [(vec i)]) (first optimized-article-flow)))
-        ]
+                                 (map (fn [i] [(with-meta (vec i) (meta i))]) (first optimized-article-flow)))]
     optimized-article-flow))
 
 ;;(time @(TGa. nil domain 30 (fn [x] (+ (first x) (last x))) 30 0.07 0.1))
@@ -601,12 +681,9 @@
         reference (reference-point last-line width)
         ;;calc backward reference that is the reference point of the last curve
         backward-reference (reference-point (vec (reverse last-line)) (:curve-radius invariants))
-        dreference (if
-                    (> 
-                      (line-length [backward-reference (last concrete-path)])  
-                      (line-length [reference (last concrete-path)]))
-                    reference 
-                    backward-reference)
+        curve-frauds-arrow (> 
+                             (line-length [backward-reference (last concrete-path)])  
+                             (line-length [reference (last concrete-path)]))
 
         ;;calc intermediate points (corners of the ancle)
         inter [{:y (+ (-> reference :y) (/ width 2))
@@ -640,7 +717,8 @@
               (-> inter second r2d :x) (-> inter second r2d :y)
               (-> inter last r2d :x) (-> inter last r2d :y) \z]
         path (interpose " " path)]
-    {:reference reference
+    {:curve-frauds-arrow curve-frauds-arrow
+     :reference reference
       :arrow [:path {:class "flow-arrow" :fill (get color-by-article (-> x first)) :d (apply str path)
                      :transform (format "rotate(%f,%f,%f)" (double rotation-ancle) (-> reference :x double) (-> reference :y double))}]}))
   
@@ -657,11 +735,23 @@
 (defn- render-article-flow-item [color-by-article x & args]
   "renders an article flow using xs ({area -> {article -> {:x :y}}})"
   (let [select first
+        ;;adjust first and last point in order to start after the source and stop right before sink
+        pos1 (-> x last select first)
+        posn (-> x last select last)
+        pos1post (-> x last select second)
+        pos1 (reference-point [pos1post pos1] (/ (:article-radius goods-flow) 4))
+        x (concat  
+            (drop-last x)
+            [(with-meta 
+              [(vec
+                 (concat [pos1] (-> x last select rest drop-last) [posn]))]
+              (-> x last select meta))])
+        ! (println :x x)
+
         arrow (apply render-arrow color-by-article x (-> x last select) args)
         args (if args (apply hash-map args) 
                  {})
-        pos1 (-> x last select first)
-        posn (-> x last select last)
+        ! (println :meta (drop-last x) (-> x last select) (-> x last select meta))
         path (if
                (< (-> x last select count) 3)
                ;;case 1: straigth line
@@ -670,7 +760,7 @@
                  [\L (-> arrow :reference r2d :x) (-> arrow :reference r2d :y)])
                ;;else
                (let [index-path (zipmap (range) (-> x last select))
-                     path (reduce
+                     path (with-meta (reduce
                             (fn [acc index]
                               (let [preB (if (< index (-> index-path count dec))
                                            (r2d (reference-point [(get index-path index) (get index-path (inc index))] (:curve-radius invariants)))
@@ -712,13 +802,17 @@
                                     
                                     :else
                                     [])))))
-                            {:path [] :non-monotonic false} (range (count index-path)))
-
-                     ! (comment (println :non-monotonic (:non-monotonic path)))
+                            {:path [] :non-monotonic false} (range (count index-path))) (-> x last select meta))
 
                      ;;do it again with straight lines if we have a non-monotonic shape
-                     path (if 
-                            (-> path :non-monotonic not) path
+                     path (if
+                            (or
+                              (contains? (meta path) :no-rounding)
+                              (:non-monotonic path)
+                              ;;(:curve-frauds-arrow arrow)
+                              ) 
+                            (do
+                              (println :non-monotonic)
                             (reduce
                               (fn [acc index]
                                 (assoc 
@@ -740,7 +834,8 @@
                                       
                                       :else
                                       []))))
-                                {:path [\L] :non-monotonic false} (range (count index-path))))]
+                                {:path [\L] :non-monotonic false} (range (count index-path))))
+                            path)]
                 (concat 
                  [\M (:x (r2d pos1)) (:y (r2d pos1))]
                  (:path path))))
@@ -796,6 +891,7 @@
   .flow-path {
     fill: none; 
     stroke-opacity: 0.7;
+    stroke-linejoin: round;
   }
   
   .flow-arrow {
@@ -944,21 +1040,8 @@
                                   :in (+ (:in acc) inc-in)
                                   :out (+ (:out acc) inc-out))))
                        {:in 0 :out 0} article-flow)
-      ! (println :fan fan-in-fan-out)
       
       article-flow-model (model-article-flow article-position-by-area article-flow)
-
-      article-flow-lc (vec (let [points-sequences (map last article-flow-model)]
-                             (vec (map 
-                               (fn [points-seq]
-                                 (vec (map
-                                   (fn [points]
-                                     (vec (map
-                                       (fn [[point i]]
-                                         [(nth points i) point])
-                                       (zipmap (rest points) (range)))))
-                                   points-seq)))
-                               points-sequences))))
       ]
   [:body
 
