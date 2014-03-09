@@ -16,5 +16,5 @@ core.clj enthält die von adapter veränderte und server verarbeitete datenstruk
 
 lein repl --port 8080 --path samples
 
---port optional
---path relativer oder absoluter pfad. entweder eine existierende datei oder ein existierendes Verzeichnis
+* --port optional
+* --path relativer oder absoluter pfad. entweder eine existierende datei oder ein existierendes Verzeichnis
