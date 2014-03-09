@@ -1,4 +1,15 @@
-lambdaroyal-logistics-report
-============================
+=LambdaRoyal Logistik Warenfluss Analyse=
 
-C2/D3.js Reports for visualizing goods movement flows
+Diese Serveranwendung reagiert auf die Veränderung
+* des Clojure Quellcodes sankey.clj
+* des per Programmparameters -i angegebenen Excel (.xls) Files
+
+und stellt die Warenfluss Analyse entsprechend des Excelfiles per SVG unter
+http://localhost:8080 bereit.
+
+==Strukture des Servers==
+
+server.clj startet einen HTTP Server, liefert statisches Reload Script aus setzt einen watch auf die zentrale datenstruktur core/current-page
+core.clj enthält die von adapter veränderte und server verarbeitete datenstruktur 
+
+==Start des Servers==
