@@ -1,4 +1,4 @@
-# LambdaRoyal Logistik Warenfluss Analyse=
+# LambdaRoyal Logistik Warenfluss Analyse
 
 Diese Serveranwendung reagiert auf die Veränderung
 * des Clojure Quellcodes sankey.clj
@@ -12,7 +12,7 @@ http://localhost:8080 bereit.
 server.clj startet einen HTTP Server, liefert statisches Reload Script aus setzt einen watch auf die zentrale datenstruktur core/current-page
 core.clj enthält die von adapter veränderte und server verarbeitete datenstruktur 
 
-##Start des Servers##
+##Start des Servers
 
 lein repl --port 8080 --path samples
 
