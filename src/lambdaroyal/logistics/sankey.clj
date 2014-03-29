@@ -1,9 +1,11 @@
 ;; Author: christian.meichsner@informatik.tu-chemnitz.de
 
-(ns lambdaroyal.logistics.sankey 
+(ns lambdaroyal.logistics.sankey
   (:use [c2.core :only [unify]])
   (:require [c2.scale :as scale])
   (:require [clojure.set :as set])
+  (:require [lambdaroyal.logistics.algorithm.genetic])
+  (:import [lambdaroyal.logistics.algorithm.genetic TGa])
   (:import [org.lambdaroyal.util ConsoleProgress]))
 
 (def ^{:doc "used for rendering the bubbles representing the various articles in the areas"} article-colors
@@ -50,71 +52,18 @@
              {:name "Abpackerei" :dy 1000 :separated true}
              {:name "Blocklager"}
              ]}
-    
+
     ]
    :article-groups
-   #{"Rohwaren Dosen" "Fertigwaren" "Rohwaren Fässer" "Hilfsstoffe" "Verpackung" "Leergut Migros" "Abfall" "Leergut Fässer" "Fertigwaren Migros" "Fertigwaren Rest"} 
-  
+   #{"Rohwaren Dosen" "Fertigwaren" "Rohwaren Fässer" "Hilfsstoffe" "Verpackung" "Leergut Migros" "Abfall" "Leergut Fässer" "Fertigwaren Migros" "Fertigwaren Rest"}
+
    :goods-flow
    {"Rohwaren Fässer"
     [["Inbound" "Palettenlager EG" 2000]
      ["Palettenlager EG" "Waschen" 2000]
-     ["Waschen" "Lift 1" 2000]
-     ["Lift 1" "Abfüllerei" 2000]]
-    "Rohwaren Dosen"
-    [
-     ["Inbound" "Lift 1" 2300]
-     ["Lift 1" "Palettenwenden" 1150]
-     ["Lift 1" "Palettenlager OG" 1150] 
-     ["Palettenwenden" "Palettenlager OG" 2300]
-     ["Palettenlager OG" "Palettenwenden" 1150]
-     ["Palettenlager OG" "Abfüllerei" 2300]
-     ["Abfüllerei" "Abpackerei" 2300]
-    ]
-    "Hilfsstoffe"
-    [["Inbound" "Palettenlager EG" 42]
-     ["Palettenlager EG" "Waschen" 30]
-     ["Palettenlager EG" "Lift 1" 12]
-     ["Lift 1" "Abfüllerei" 12]]
-    "Verpackung"
-    [["Inbound" "Zwischenboden" 451]
-     ["Zwischenboden" "Lift 1" 451]
-     ["Lift 1" "Abfüllerei" 451]]
-
-    "Leergut Migros"
-    [["Inbound" "Gang" 2366]
-     ["Gang" "Lift 1" 2366]
-     ["Inbound" "Lift 1" 2000]
-     ["Lift 1" "Abfüllerei" 4366]]
-
-    "Abfall"
-    [["Lift 2" "Palettenlager EG" 204]
-     ["Palettenlager EG" "Outbound" 204]
-     ["Abfüllerei" "Lift 2" 204]]
-
-    "Leergut Fässer"
-    [["Waschen" "Unter Zwischenboden" 1400]
-     ["Unter Zwischenboden" "Outbound" 1400]]
-     
-    
-    "Fertigwaren Migros"
-    [
-     ["Abfüllerei" "Abpackerei" 3246]
-     ["Abpackerei" "Lift 2" 2246]
-     ["Blocklager" "Lift 2" 1000]
-     ["Lift 2" "Outbound" 2246]
-     ["Lift 2" "Gang" 1000]
-     ["Abpackerei" "Blocklager" 1000]
-    ]
-
-    "Fertigwaren Rest"
-    [["Lift 2" "Outbound" 2656]
-     ["Abpackerei" "Lift 2" 2656]
-     ["Abfüllerei" "Abpackerei" 2656]]
-
-
+     ["Waschen" "Lift 1" 2000]]
     }
-   
+
    :goods-flow-constraints
    {:source "Inbound"
     :sink "Outbound"
@@ -122,25 +71,6 @@
     :pick-delay 15
     :transfer-delay 120}
 })
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 (comment (def goods-flow
   {:title "";;"Warenflussanalyse Mars Roboter Fabs Inc. (Sep. 2013)"
@@ -162,10 +92,10 @@
              {:name "tiefkühl" :separated true}]}]
    :article-groups
    #{"Betriebsstoffe" "Rohstoffe" "Werkzeuge"}
-   
+
    :goods-flow
    {"Betriebsstoffe"
-    [  
+    [
       ["kalt" "tiefkühl" 10]
       ["warm" "tiefkühl" 6]
       ]
@@ -175,145 +105,22 @@
     :sink "outbound"}}))
 
 
-;;visualize genetic optimization progress
+;;visualize optimization progress
 (def progress (ConsoleProgress. \-))
 (def progress-agent (agent 0))
-(def ! (add-watch progress-agent :foo 
+(def ! (add-watch progress-agent :foo
              (fn [k r o n]
-               (.showProgress progress "genetic optimization of pathes" n))))
+               (.showProgress progress "optimization of pathes" n))))
 
 
 (def progress-optimize-centers (ConsoleProgress. \-))
 (def progress-agent-optimize-centers (agent 0))
-(def ! (add-watch progress-agent-optimize-centers :foo 
+(def ! (add-watch progress-agent-optimize-centers :foo
              (fn [k r o n]
-               (.showProgress progress-optimize-centers "genetic optimization of area centers" n))))
-
-;;genetic algorithm
-;;consists of
-;;1. domain abstraction: map of keys to finite value ranges. each value range represents the possible values of a domain.
-;;2. fitness function: function providing a discrete numerical fitness based on the instance of a domain abstraction, higher fitness value means more fit
-;;4. intern: population: a function returning n randomly generated instances of the domain abstraction
-;;5. intern: selection: returning n instances of domain abstraction from a list of n instances
-;;6. intern: mutation
-;;7. intern: crossover
-(defprotocol PGa
-  (population [this])
-  (sort-population [this current-population])
-  (selection [this current-population])
-  (mutation [this selected-population])
-  (crossover [this mutated-population]))
-
-
-(deftype TGa [^:unsynchronized-mutable state ^clojure.lang.PersistentArrayMap domain size fn-fitness max-round p-mutation p-crossover progress]
-  clojure.lang.IDeref
-  (deref [sc]
-    (locking sc
-      (or state
-          (set! state
-                (loop [round 0 current-pop (population sc)]
-                  (let [sorted-pop (sort-population sc current-pop)
-                        selected-pop (selection sc sorted-pop)
-                        ! (comment (println :selected-pop selected-pop))
-                        mutated-pop (mutation sc selected-pop)
-                        ! (comment (println :mutated-pop mutated-pop))
-                        crossover-pop (crossover sc mutated-pop)
-                        ! (if
-                            (and
-                              progress
-                              (= clojure.lang.Agent (class progress)))
-                            (send-off progress #(+ % (int (Math/ceil (/ 100 max-round)))))
-                            nil)]
-                    (cond
-                      ;;get out
-                      (= round max-round)
-                        (first
-                          (sort-by last
-                                  (sort-population sc crossover-pop)))
-                      :else
-                      (recur (inc round) crossover-pop))))))))
-  PGa
-  (population [this]
-    (let [instance (fn []
-                     (vec (map #(-> % shuffle first)
-                            domain)))]
-      (repeatedly size instance)))
-  (sort-population [this current-population]
-    (zipmap current-population (pmap fn-fitness current-population)))
-  (selection [this sorted-population]
-    (let [max-fitness (inc (apply max (vals sorted-population)))
-          normalized-population (persistent! 
-                                  (reduce (fn [acc [k v]]
-                                            (assoc! acc k (- max-fitness v)))
-                                          (transient {}) sorted-population))
-          overall-fitness (apply + (vals normalized-population))
-          normalized-population (persistent!
-                                  (reduce (fn [acc [k v]]
-                                            (assoc! acc k (/ v overall-fitness)))
-                                          (transient {}) normalized-population))
-          normalized-population (vec (map identity normalized-population))]
-      (repeatedly size #(let [p (Math/random)]
-                     (loop [sum 0 i 0]
-                       (if
-                         (> (+ sum (last (nth normalized-population i))) p)
-                         (first (nth normalized-population i))
-                         ;;else
-                         (recur (+ sum (last (nth normalized-population i))) (inc i))))))))
-  (mutation [this selected-population]
-    (map 
-      (fn [chromosom]
-        (reduce
-          (fn [acc i]
-            (conj
-              acc
-              (let [p (Math/random)]
-                (if
-                  (> p p-mutation)
-                  (nth chromosom i)
-                  ;;else
-                  (-> (nth domain i) shuffle first)))))
-              [] (range (count chromosom)))) 
-      selected-population))
-  (crossover [this mutated-population]
-    (let [;;shuffle them for random selection
-          population (shuffle mutated-population)
-          ;;building partitions containing two elements
-          partitioned (partition-all 2 population)]
-        (reduce
-          (fn [acc i]
-            (cond (= 1 (count i))
-                  (conj acc i)
-                  :else
-                  (let [i1 (first i)
-                        i2 (last i)]
-                    (if 
-                      (or 
-                        (> (Math/random) p-crossover)
-                        (= 1 (count i1)))
-                      (conj acc i1 i2)
-                      ;;else
-                      (let [crossover-point (inc (.nextInt (java.util.Random.) (-> i1 count dec)))]
-                        (conj acc
-                              (concat (take crossover-point i1) (drop crossover-point i2))
-                              (concat (take crossover-point i2) (drop crossover-point i1))))))))
-          [] partitioned))))
-
-;;(time @(TGa. nil domain 30 (fn [x] (+ (first x) (last x))) 30 0.09 0.15 nil
-;;n))
-
-
-
-
-
-
-
-
-
-
-
+               (.showProgress progress-optimize-centers "optimization of area centers" n))))
 
 (defn- eq? [a b]
-  (cond 
+  (cond
     (= (class a) (class b))
     (= a b)
     (and (number? a) (number? b))
@@ -322,10 +129,10 @@
     (= a b)))
 
 ;;scales the throughtput of all dataflows into [1.. :article-radius]
-(def scale-throughtput 
+(def scale-throughtput
   (let [t (map last (reduce concat (map (fn [[k v]]
                                          (map #(cons k %) v)) (:goods-flow goods-flow))))]
-    (scale/linear 
+    (scale/linear
                :domain [0 (apply max t)]
                :range [(min 10 (/ (:article-radius goods-flow) 2)) (* (:max-throughtput-factor goods-flow) (:article-radius goods-flow))])))
 
@@ -348,7 +155,7 @@
         range-per-area (zipmap areas (repeatedly (fn [] y-range)))
         ;;sort out y vals that are out of area border
         range-per-area (map (fn [[k v]]
-                              [k (vec (filter 
+                              [k (vec (filter
                                         #(and
                                             (>= % (+ (:y k) (* 2  (:article-radius goods-flow))))
                                             (<= % (- (+ (:y k) (:height k))
@@ -361,12 +168,12 @@
         ;;dynamic list comprehension - to slow
         ;;range-space (dyn-for (vec (map second range-per-area)))
         ;;min-range (first (sort-by (juxt #(-> % distinct count) #(apply + %)) range-space))
-        
+
         y-by-area (zipmap areas (first min-range))
-        area-center (reduce 
-                      (fn [acc [k v]] 
-                        (assoc acc k 
-                               (assoc v :y (get y-by-area k)))) 
+        area-center (reduce
+                      (fn [acc [k v]]
+                        (assoc acc k
+                               (assoc v :y (get y-by-area k))))
                       {} area-center)]
     area-center))
 
@@ -374,16 +181,16 @@
   "checks whether a point is outside goods-flow topology"
   (let [dy (:dy goods-flow)
         dx (apply + (map :dx (:topology goods-flow)))
-        y (cond (< (:y p) 0) 0 
+        y (cond (< (:y p) 0) 0
                 (> (:y p) dy) dy
-                :else (:y p)) 
-        x (cond (< (:x p) 0) 0 
+                :else (:y p))
+        x (cond (< (:x p) 0) 0
                 (> (:x p) dx) dx
-                :else (:x p))] 
-    {:x x :y y})) 
+                :else (:x p))]
+    {:x x :y y}))
 
 (defn- ring [from to positiv diverge-orig]
- "this function calculates a rectangular path from :from to :to and returns this path as vector of points" 
+ "this function calculates a rectangular path from :from to :to and returns this path as vector of points"
  (cond (and (not= (:x from) (:x to))
             (not= (:y from) (:y to)))
        (let [direction (*
@@ -453,11 +260,11 @@
 
 (defn- online? [point line]
   (let [m (ascent line)
-        n (if 
-            (nil? m) 
+        n (if
+            (nil? m)
             nil
             (line-n line m))]
-    (cond 
+    (cond
       (nil? m)
       (and
         (= (:x point) (-> line first :x))
@@ -499,7 +306,7 @@
     (and
       (single-dim a b :x)
       (single-dim a b :y))))
-                            
+
 
 
 
@@ -545,7 +352,7 @@
                     m1 (first m1-2)
                     m2 (last m1-2)
                     ]
-                (cond 
+                (cond
                   ;; l2 vertical
                   (nil? m2)
                   (in-range? l1 :x (-> l2 first :x))
@@ -565,7 +372,7 @@
 
 (defn normalize-path [path]
   (vec
-    (map 
+    (map
       (fn [a b] (with-meta [a b] (meta path)))
       (drop-last path) (rest path))))
 
@@ -584,14 +391,14 @@
 (defn transpose
   [s]
   (apply map vector s))
- 
+
 (defn nested-for
   [f x y]
   (map (fn [a]
-    (map (fn [b] 
+    (map (fn [b]
             (f a b)) y))
               x))
- 
+
 (defn matrix-mult
   [a b]
   (nested-for (fn [x y] (reduce + (map * x y))) a (transpose b)))
@@ -608,7 +415,7 @@
 
 (defn rotation-translation [point arc dx dy]
   (let [m1 (matrix-mult
-             (translation-matrix dx dy) 
+             (translation-matrix dx dy)
              (matrix-mult (rotation-matrix arc)
                           (translation-matrix (- dx) (- dy))))
         m2 [[(:x point)]
@@ -631,7 +438,7 @@
         ;;down
         {:x (-> line first :x) :y (- (-> line last :y) width invariant-distance)}
         {:x (-> line first :x) :y (+ (-> line last :y) width invariant-distance)})
-      
+
       ;;left/right
       (= m 0)
       {:y (-> line last :y)
@@ -671,7 +478,7 @@
 
 (defn- trapez [from to positive diverge]
   "take a line from A to B, calcs reference Point A' (A->B) and B' (B->A) and rotates the reference point (+/-)45/-45 degress"
-  (let [length (line-length [from to])] 
+  (let [length (line-length [from to])]
     (if
       (> length (* 5 (:article-radius goods-flow)))
       (let [ref-from (reference-point [to from] (/ length diverge))
@@ -688,8 +495,8 @@
                 (and (>= (:y from) (:y to)) (>= (:x from) (:x to))) :right
                 (and (<= (:y from) (:y to)) (>= (:x from) (:x to))) :up
                 (and (<= (:y from) (:y to)) (<= (:x from) (:x to))) :left)
-        start (if 
-                positive    
+        start (if
+                positive
                 start
                 ({:down :left
                   :right :down
@@ -726,31 +533,32 @@
                              0 line-combination-set)]
     intersection-count))
 
-(deftype TZigZag [^:unsynchronized-mutable state optimized-article-flow]
-  clojure.lang.IDeref
-  (deref [sc]
-    (locking sc
-      (or
-        state
-        (set! state
-              (let [flats (atom 0)
-                    bidirectional-flats (atom #{})
-                    progress (ConsoleProgress. \-)
-                    ! (.showProgress progress "flatten unnecessary zig-zags" 0)
 
-                    optimized-article-flow (map
-                                            (fn [i]
-                                              (let [! (.showProgress progress (format "flatten unnecessary zig-zags, flats so far %d" @flats) (Math/ceil (* 100 (/ (inc i) (count optimized-article-flow))))) 
-                                                    ;;! (println (drop-last (optimized-article-flow i)))
-                                                    article-flow (map #(with-meta (-> % last first) {:origin (drop-last %)}) optimized-article-flow)
-                                                    
-                                                    ;;article flow will contain all other pathes than the currently inspected one
-                                                    article-flow (normalize-pathes 
-                                                                    (concat 
-                                                                      (take i article-flow)
-                                                                      (drop (inc i) article-flow)))
-                                                    line-set (set article-flow)
-                                                   
+(defn- zigzag [optimized-article-flow]
+  (let [flats (atom 0)
+        bidirectional-flats (atom #{})
+        progress (ConsoleProgress. \-)
+        ! (.showProgress progress "flatten unnecessary zig-zags" 0)
+        optimized-article-flow (map
+                                 (fn [i]
+                                   (let [! (.showProgress progress (format "flatten unnecessary zig-zags, flats so far %d" @flats) (Math/ceil (* 100 (/ (inc i) (count optimized-article-flow)))))
+                                         ;;! (println (drop-last (optimized-article-flow i)))
+                                         article-flow (map #(with-meta (-> % last first) {:origin (drop-last %)}) optimized-article-flow)
+
+                                         ;;article flow will contain all other pathes than the currently inspected one
+                                         article-flow (map 
+                                                        last
+                                                        (filter
+                                                          (fn [[id k]]
+                                                            (not= id i))
+
+                                                                  (zipmap (range) article-flow)))
+
+                                                    line-set (distinct article-flow)
+                                                    line-set (reduce
+                                                       #(concat % (normalize-path %2))
+                                                       [] line-set)
+
                                                     spec (take 3 (optimized-article-flow i))
 
                                                     ;;reference-flow will contain only the lines of the current flow
@@ -769,7 +577,7 @@
                                                                                                       true)
                                                                                                   false))
                                                                                               line-set))))
-                                                                                     0 reference-flow) 
+                                                                                     0 reference-flow)
 
                                                     ;;reference is a straight line
                                                     reference [(-> (optimized-article-flow i) last first first) (-> (optimized-article-flow i) last first last)]
@@ -779,7 +587,7 @@
                                                     intersects (count
                                                                  (filter
                                                                    (fn [other]
-                                                                     (if 
+                                                                     (if
                                                                        (intersect? reference other)
                                                                        (do (comment (println :intersect reference (meta reference) :other other (meta other)))
                                                                            true)
@@ -802,10 +610,10 @@
                                                   ;;else
                                                   original)))
                                             (range (count optimized-article-flow)))]
-                optimized-article-flow))))))
+                optimized-article-flow))
 
 (defn- model-article-flow [xs article-flow]
-  "models an article flow using xs ({area -> {article -> {:x :y}}}) and 
+  "models an article flow using xs ({area -> {article -> {:x :y}}}) and
   article-flow which is '('(article from to amount)*).
   result is '('(article from to amount [[{:x :y}{:x :y}][{:x :y}{:x :y}{:x :y}{:x :y}]]))"
   (let [stage1 (map
@@ -831,7 +639,7 @@
                          ;;rounding is allowed if last line is large enought
                          options (map
                                    #(let [l (line-length [(-> % drop-last last) (last %)])]
-                                      (if 
+                                      (if
                                         (< l (* 8 (:article-radius goods-flow)))
                                         (with-meta % {:no-rounding true})
                                         %))
@@ -841,7 +649,7 @@
 
         domain (map last stage1)
 
-        ! (.showProgress progress "Start genetic optimization of pathes" 0)
+        ! (.showProgress progress "Start optimization of pathes" 0)
         optimized-article-flow @(TGa. nil domain 4 article-flow-fitness 3 0.09 0.15 progress-agent)
         ;;now we map back the optimized pathes into the article flow
         optimized-article-flow (vec
@@ -850,26 +658,25 @@
                                       (list article from to amount v))
                                     (map drop-last stage1)
                                     (map (fn [i] [(with-meta (vec i) (meta i))]) (first optimized-article-flow))))
-        optimized-article-flow (vec @(TZigZag. nil optimized-article-flow))
-        optimized-article-flow @(TZigZag. nil optimized-article-flow)]
+        ;;optimized-article-flow (vec @(TZigZag. nil optimized-article-flow))
+        optimized-article-flow (vec (zigzag optimized-article-flow))
+        optimized-article-flow (zigzag optimized-article-flow)
+        ]
     optimized-article-flow))
-
-;;(time @(TGa. nil domain 30 (fn [x] (+ (first x) (last x))) 30 0.07 0.1))
-
 
 (defn- render-arrow [color-by-article x concrete-path & args]
   "renders an arrow designating to the target of a certain article flow. the shape will be triangle with equal spaced cathets,
   and min ancle size of 3/2 * scaled througthput. returns a map containing :reference as well as :arrow. :reference replaces the last point of the path"
-  (let [args (if args 
-                 (apply hash-map args) 
+  (let [args (if args
+                 (apply hash-map args)
                  {})
         last-line [{:x (-> concrete-path drop-last last :x)
                     :y (-> concrete-path drop-last last :y)}
                    {:x (-> concrete-path last :x)
                     :y (-> concrete-path last :y)}]
         width (cond
-                (:arrow-width args) (:arrow-width args) 
-                (:stroke-width args) (:stroke-width args) 
+                (:arrow-width args) (:arrow-width args)
+                (:stroke-width args) (:stroke-width args)
                 :else (* (scale-throughtput (nth x 3)) 2))
         m (ascent last-line)
         n (if (nil? m) nil (line-n last-line m))
@@ -885,8 +692,8 @@
         reference (reference-point last-line width)
         ;;calc backward reference that is the reference point of the last curve
         backward-reference (reference-point (vec (reverse last-line)) (:curve-radius goods-flow))
-        curve-frauds-arrow (> 
-                             (line-length [backward-reference (last concrete-path)])  
+        curve-frauds-arrow (>
+                             (line-length [backward-reference (last concrete-path)])
                              (line-length [reference (last concrete-path)]))
 
         ;;calc intermediate points (corners of the ancle)
@@ -902,10 +709,10 @@
                           ;;check whether line is going down or up
                           (if (< (-> last-line first :y) (-> last-line last :y))
                             ;;down
-                            90 
+                            90
                             ;;up
                             -90)
-                          
+
                           ;;left/right
                           (= m 0)
                           (if (< (-> last-line first :x) (-> last-line last :x))
@@ -925,7 +732,7 @@
      :reference reference
       :arrow [:path {:class "flow-arrow" :fill (get color-by-article (-> x first)) :d (apply str path)
                      :transform (format "rotate(%f,%f,%f)" (double rotation-ancle) (-> reference :x double) (-> reference :y double))}]}))
-  
+
 (defn- monotonic-index? [line1 line2]
   "returns false if x or y vector of line1 are directed opposite to those of line2"
   (let [line1-dx (apply - (map :x line1))
@@ -944,20 +751,20 @@
         posn (-> x last select last)
         pos1post (-> x last select second)
         pos1 (reference-point [pos1post pos1] (/ (:article-radius goods-flow) 4))
-        x (concat  
+        x (concat
             (drop-last x)
-            [(with-meta 
+            [(with-meta
               [(vec
                  (concat [pos1] (-> x last select rest drop-last) [posn]))]
               (-> x last select meta))])
 
         arrow (apply render-arrow color-by-article x (-> x last select) args)
-        args (if args (apply hash-map args) 
+        args (if args (apply hash-map args)
                  {})
         path (if
                (< (-> x last select count) 3)
                ;;case 1: straigth line
-               (concat 
+               (concat
                  [\M (:x (r2d pos1)) (:y (r2d pos1))]
                  [\L (-> arrow :reference r2d :x) (-> arrow :reference r2d :y)])
                ;;else
@@ -973,35 +780,35 @@
                                     postA (if (< index (-> index-path count dec))
                                            (r2d (reference-point [(index-path (inc index)) (index-path index)] (:curve-radius goods-flow)))
                                            nil)
-                                    non-monotonic 
+                                    non-monotonic
                                       (or
                                         (:non-monotonic acc)
                                         (and
                                           (-> preB nil? not) (-> postA nil? not)
                                           (not (monotonic-index? [postA preB] [(get index-path index) (get index-path (inc index))]))))
                                     ]
-                                (assoc 
-                                  acc 
+                                (assoc
+                                  acc
                                   :non-monotonic non-monotonic
-                                  :path     
-                                (concat 
+                                  :path
+                                (concat
                                   (:path acc)
                                   (cond
                                     (= 0 index)
                                     ;;erste position -> eine linie zum preB also zum vorgängerreferenzknoten des nächsten knotens
                                     [\L (-> (index-path index) r2d :x) (-> (index-path index) r2d :y) (:x preB) (:y preB) \newline]
-                                    
+
                                     (< index (-> index-path count dec dec))
-                                    ;;die positionen von ]0 ... ende[ -> wir brauchen eine krümmung und anschliessend eine linie 
+                                    ;;die positionen von ]0 ... ende[ -> wir brauchen eine krümmung und anschliessend eine linie
                                     ;;zum vorgängerreferenzknoten des nächsten knotens
                                     [\C (:x preA) (:y preA) (-> (index-path index) r2d :x) (-> (index-path index) r2d :y) (:x postA) (:y postA)
                                     \L  (:x preB) (:y preB)]
-                                    
+
                                     (= index (-> index-path count dec dec))
-                                    ;;vorletzte position -> zeichnen bis zur letzten position 
+                                    ;;vorletzte position -> zeichnen bis zur letzten position
                                     [\C (:x preA) (:y preA) (-> (index-path index) r2d :x) (-> (index-path index) r2d :y) (:x postA) (:y postA)
                                     \L (-> arrow :reference r2d :x) (-> arrow :reference r2d :y)]
-                                    
+
                                     :else
                                     [])))))
                             {:path [] :non-monotonic false} (range (count index-path))) (-> x last select meta))
@@ -1012,37 +819,37 @@
                               (contains? (meta path) :no-rounding)
                               (:non-monotonic path)
                               ;;(:curve-frauds-arrow arrow)
-                              ) 
+                              )
                             (reduce
                               (fn [acc index]
-                                (assoc 
-                                  acc 
-                                  :path     
-                                  (concat 
+                                (assoc
+                                  acc
+                                  :path
+                                  (concat
                                     (:path acc)
                                     (cond
                                       (< index (-> index-path count dec dec))
-                                      ;;die positionen von ]0 ... ende[ -> wir brauchen eine krümmung und anschliessend eine linie 
+                                      ;;die positionen von ]0 ... ende[ -> wir brauchen eine krümmung und anschliessend eine linie
                                       ;;zum vorgängerreferenzknoten des nächsten knotens
                                       [(-> (index-path index) r2d :x) (-> (index-path index) r2d :y)
                                        (-> (index-path (inc index)) r2d :x) (-> (index-path (inc index)) r2d :y)]
-                                      
+
                                       (= index (-> index-path count dec dec))
-                                      ;;vorletzte position -> zeichnen bis zur letzten position 
+                                      ;;vorletzte position -> zeichnen bis zur letzten position
                                       [(-> (index-path index) r2d :x) (-> (index-path index) r2d :y)
                                        (-> arrow :reference r2d :x) (-> arrow :reference r2d :y)]
-                                      
+
                                       :else
                                       []))))
                                 {:path [\L] :non-monotonic false} (range (count index-path)))
                             path)]
-                (concat 
+                (concat
                  [\M (:x (r2d pos1)) (:y (r2d pos1))]
                  (:path path))))
         path (interpose " " path)]
     {:text (if
              (:stroke-text args)
-             [:text {:class "stroke-text" :text-anchor "middle" 
+             [:text {:class "stroke-text" :text-anchor "middle"
                        :x (double (/ (apply + (map :x [pos1 posn])) 2))
                        :y (+ (double (/ (apply + (map :y [pos1 posn])) 2)) 6)} (:stroke-text args)]
              nil)
@@ -1081,23 +888,23 @@
     font: 12px sans-serif;
     color: #777777;
   }
-  
+
   .title-text {
     font-size: 24px;
     fill: #777777;
     font-weight: bold;
   }
-  
+
   .stroke-text {
     font-size: 20px;
     fill: black;
     font-weight: bold;
   }
-  
+
   .zone {
     fill: lightblue;
   }
-  
+
   .zone-text {
     fill: #777777;
     font-weight: bold;
@@ -1116,11 +923,11 @@
   }
 
   .flow-path {
-    fill: none; 
+    fill: none;
     stroke-opacity: 0.7;
     stroke-linejoin: round;
   }
-  
+
   .flow-arrow {
     fill-opacity: 0.7;
   }
@@ -1128,7 +935,7 @@
   body {
     background: white;
   }
-  
+
   ")
 
 (def css-headline
@@ -1139,7 +946,7 @@
       border-top-width: 2px;
       border-top-style: solid;
     }
-    
+
     th, td, div {
       font: 20px sans-serif;
     }")
@@ -1168,7 +975,7 @@
                       (:areas (reduce
                         (fn [acc i]
                           (let [max-y (- max-y zone-top-inline)
-                                start-y (+ (:start-y acc) (if 
+                                start-y (+ (:start-y acc) (if
                                                                   (:dy i)
                                                                   (:dy i)
                                                                   (- max-y (:start-y acc))))
@@ -1186,7 +993,7 @@
         zones (reduce
                 (fn [acc i]
                   (assoc acc :start-x (+ (:start-x acc) (:dx i))
-                            :zones (conj (:zones acc) 
+                            :zones (conj (:zones acc)
                                       {:x (-> (:start-x acc) scale-x )
                                       :y (-> min-y scale-y )
                                       :width (-> (:dx i) scale-dx )
@@ -1215,7 +1022,7 @@
                                   (assoc acc area (if existing (conj existing article)
                                                     #{article}))))
                               {} article-set-by-area)
-        
+
         ;;now we calculate the relevant positions of each article within all the areas
         article-position-area-invariant (let [articles (keys (:goods-flow goods-flow))
                                               article-index (zipmap articles (range))
@@ -1241,22 +1048,22 @@
                                                             (sort
                                                               (map (fn [[k v]]
                                                                       (- (:y v) (:y (get area-by-name k))
-                                                                        (/ (-> goods-flow :article-radius) 1))) 
+                                                                        (/ (-> goods-flow :article-radius) 1)))
                                                                     area-center)))
                                       article-distance (cond (= 1 article-count)
                                                               0
                                                               :else
                                                               (/ min-center-distance (dec article-count)))
                                       article-distance (max article-distance (* 2 (-> goods-flow :article-radius)))]
-                                  
+
                                     (reduce
                                     (fn [acc [area center]]
                                       (assoc acc area
                                               (reduce (fn [acc article]
-                                                    (assoc acc article 
+                                                    (assoc acc article
                                                             {:x (+ (:x center) (* article-distance (get article-position-area-invariant article)))
                                                             :y (+ (:y center) (* article-distance (get article-position-area-invariant article)))
-                                                            })) 
+                                                            }))
                                                   {} (get article-set-by-area area))))
                                     {} area-center))
 
@@ -1268,15 +1075,15 @@
         ;;consolidate article flow (article from to amount & path)
         article-flow (reduce concat (map (fn [[k v]]
                                           (map #(cons k %) v)) (:goods-flow goods-flow)))
-        
-        ;; calc some stats 
+
+        ;; calc some stats
         fan-in-fan-out (reduce
                         (fn [acc [_ from to amount & r]]
-                          (let [inc-in (if (= from (-> goods-flow :goods-flow-constraints :source)) 
-                                          amount 
+                          (let [inc-in (if (= from (-> goods-flow :goods-flow-constraints :source))
+                                          amount
                                           0)
-                                inc-out (if (= to (-> goods-flow :goods-flow-constraints :sink)) 
-                                          amount 
+                                inc-out (if (= to (-> goods-flow :goods-flow-constraints :sink))
+                                          amount
                                           0)]
                             (assoc acc
                                     :in (+ (:in acc) inc-in)
@@ -1287,15 +1094,15 @@
                                     (fn [acc [article from to amount & r]]
                                       (let [existing (get acc article)
                                             existing (if existing existing {:in 0 :out 0})
-                                            inc-in 
-                                              (if 
-                                                (= from (-> goods-flow :goods-flow-constraints :source)) 
-                                                amount 
+                                            inc-in
+                                              (if
+                                                (= from (-> goods-flow :goods-flow-constraints :source))
+                                                amount
                                                 0)
-                                            inc-out 
-                                              (if 
-                                                (= to (-> goods-flow :goods-flow-constraints :sink)) 
-                                                amount 
+                                            inc-out
+                                              (if
+                                                (= to (-> goods-flow :goods-flow-constraints :sink))
+                                                amount
                                                 0)]
                                         (assoc acc article
                                               (assoc existing
@@ -1306,7 +1113,7 @@
         ;; a scaling function for the fan in fan out
         scale-fan (scale/linear :domain [0 (apply max (vals fan-in-fan-out))]
                         :range [0 (:max-fan-size goods-flow)])
-        
+
         article-flow-model (model-article-flow article-position-by-area article-flow)
 
         stats-article-group (stats-article-group goods-flow)
@@ -1314,12 +1121,12 @@
     [:body
 
       [:div#headline {:style (str
-                            "background: #ffffff; " 
+                            "background: #ffffff; "
                             "display: block; "
                             "margin: auto;")}
       [:style {:type "text/css"} css]
       [:style {:type "text/css"} css-headline]
-      [:div {:class "section" :style "width: 100%"} 
+      [:div {:class "section" :style "width: 100%"}
         [:span {:style "font-weight: bold; font: 20px sans-serif; color: blue;"} \u03bb]
         [:span {:style "font-weight: bold; font: 16px sans-serif; color: black; padding-left: 2px;"} "Lambda Royal"]
         [:span {:style "font: 16px sans-serif; padding-left: 2px;"} " - Asthetics and Purity in Applied Computer Science  "]]]
@@ -1327,35 +1134,35 @@
 
       [:div {:class "logo-img1"} [:img {:src "/rocklog_logo_home.jpg"}]]
       [:svg#main {:style (str
-                          "background: #ffffff; " 
+                          "background: #ffffff; "
                           "display: block; "
                           "margin: auto;"
                           "height:" (+ height (:bottom-inset goods-flow)) ";"
                           "width:" (+ width (:right-inset goods-flow)) ";")}
       [:style {:type "text/css"} css]
-      
+
       ;;render title
       (unify
         [(:title goods-flow)]
         (fn [val]
-          [:text 
+          [:text
             {:class "title-text" :x (/ width 2) :y (scale-dy top-inset ) :text-anchor "middle"}
             val]))
 
       ;;render zones
-      (unify 
-        (map #(dissoc % :name) zones) 
+      (unify
+        (map #(dissoc % :name) zones)
         (fn [val]
           (let [val (r2d val)]
             [:rect (merge val {:class "zone" :stroke "#a0a0a0" :stroke-width 1 :rx 8 :ry 8})])))
-        
+
       ;;zone names
       (unify
         zones
         (fn [val]
           (let [val (r2d val)]
             [:text {:class "zone-text" :x (+ 10 (:x val)) :y (+ 12 (:y val))} (:name val)])))
-      
+
       ;;render areas
       (unify
         (reduce concat (map :areas zones))
@@ -1371,23 +1178,23 @@
                   (fn [val]
                     (let [val (r2d val)]
                       (if (:separated val)
-                        [:line {:class "area-separator" 
-                                :x1 (:x val) :x2 (+ (:x val) (:width val)) 
+                        [:line {:class "area-separator"
+                                :x1 (:x val) :x2 (+ (:x val) (:width val))
                                 :y1 (+ (:y val) (:height val)) :y2 (+ (:y val) (:height val))}]
                         ;;else
                         nil))))
               (map :areas zones)))
-      
+
       (unify
         (reduce concat (map :areas zones))
         (fn [val]
           [:text {:class "area-text" :x (+ 10 (:x val)) :y (+ 12 (:y val))}
             (:name val)]))
-    
+
       (let [paths (map (partial render-article-flow-item color-by-article)
                         article-flow-model)]
-        (unify 
-          (reduce  
+        (unify
+          (reduce
             (fn [acc i]
               (conj acc (:path i) (:arrow i)))
             [] paths)
@@ -1405,18 +1212,18 @@
       ;;render fan in & fan out using render-arrow [color-by-article x concrete-path]
       (let [in-center (get area-center (-> goods-flow :goods-flow-constraints :source))
             out-center (get area-center (-> goods-flow :goods-flow-constraints :sink))
-            path [(render-article-flow-item 
-                    (assoc color-by-article :stats-in "green" :stats-out "red") 
-                    [:stats-in nil nil (:in fan-in-fan-out) [[{:x 0 :y (:y in-center)}{:x (+ (scale-x -10) (/ (:article-radius goods-flow) 2)) :y (:y in-center)}]]] 
+            path [(render-article-flow-item
+                    (assoc color-by-article :stats-in "green" :stats-out "red")
+                    [:stats-in nil nil (:in fan-in-fan-out) [[{:x 0 :y (:y in-center)}{:x (+ (scale-x -10) (/ (:article-radius goods-flow) 2)) :y (:y in-center)}]]]
                     :stroke-width (scale-fan (:in fan-in-fan-out)) :arrow-width (* 1.5 (scale-fan (:in fan-in-fan-out))) :stroke-text (:in fan-in-fan-out)
                     :just-arrow true)
-                  (render-article-flow-item 
-                    (assoc color-by-article :stats-in "green" :stats-out "red") 
-                    [:stats-out nil nil (:out fan-in-fan-out) [[{:x (scale-x -10) :y (:y out-center)}{:x 0 :y (:y out-center)}]]] 
+                  (render-article-flow-item
+                    (assoc color-by-article :stats-in "green" :stats-out "red")
+                    [:stats-out nil nil (:out fan-in-fan-out) [[{:x (scale-x -10) :y (:y out-center)}{:x 0 :y (:y out-center)}]]]
                     :stroke-width (scale-fan (:out fan-in-fan-out)) :arrow-width (* 1.5 (scale-fan (:out fan-in-fan-out))) :stroke-text (:out fan-in-fan-out)
                     :just-arrow true)]]
-        (unify 
-          (reduce  
+        (unify
+          (reduce
             (fn [acc i]
               (conj acc (:path i) (:arrow i) (:text i)))
             [] path)
@@ -1426,13 +1233,13 @@
 
     ;; render appendix
     (comment [:svg#appendix {:style (str
-                          "background: #ffffff; " 
+                          "background: #ffffff; "
                           "display: block; "
                           "margin: auto;"
                           "height:" (+ (* 2 (:article-radius goods-flow)) (* (-> goods-flow :goods-flow keys count) (:article-radius goods-flow) 3)) ";"
                           "width:" width ";")}
       [:style {:type "text/css"} css]
-      
+
       ;;render color bubbles below chart to designate the article groups
       (let [i-by-article (zipmap (keys (:goods-flow goods-flow)) (range))
             start-x 10
@@ -1440,14 +1247,14 @@
         (unify
           (reduce
             (fn [acc [k v]]
-              (conj 
+              (conj
                 acc
                 ;;bubble
                 [:circle {:cx start-x :cy (+ y (* (-> goods-flow :article-radius) 3 v)) :r (-> goods-flow :article-radius) :fill (get color-by-article k)}]
                 ;;description
-                [:text {:class "zone-text" 
-                        :x (+ start-x (* (-> goods-flow :article-radius) 2)) 
-                        :y (+ (+ y 6) (* (-> goods-flow :article-radius) 3 v))}  
+                [:text {:class "zone-text"
+                        :x (+ start-x (* (-> goods-flow :article-radius) 2))
+                        :y (+ (+ y 6) (* (-> goods-flow :article-radius) 3 v))}
                         k]
                 ))
             [] i-by-article)
@@ -1456,13 +1263,13 @@
     ])
     ;; render stats (picks, drops, tansfer per article group)
     [:div#stats {:style (str
-                          "background: #ffffff; " 
+                          "background: #ffffff; "
                           "display: block; "
                           "margin: auto;")}
     [:style {:type "text/css"} css]
-    [:style {:type "text/css"} 
+    [:style {:type "text/css"}
       "
-      
+
       th, td, div {
         font: 20px sans-serif;
       }
@@ -1476,7 +1283,7 @@
       .color {
         width: 20px;
       }
-      
+
       tr.row-0 {
         background-color: #eeeeee;
       }
@@ -1516,7 +1323,7 @@
               (do
                 (swap! background inc)
                 [:tr {:class (str "row-" (mod @background 2))}
-                [:td {:style (format "background-color: %s;" (color-by-article k))} "  "] 
+                [:td {:style (format "background-color: %s;" (color-by-article k))} "  "]
                 [:td k] [:td in] [:td out]])))))]
     [:br]
 
@@ -1539,15 +1346,12 @@
               (do
                 (swap! background inc)
                 [:tr {:class (str "row-" (mod @background 2))}
-                [:td {:style (format "background-color: %s;" (color-by-article k))} "  "] 
-                [:td k] [:td pick-delay] [:td (-> pick-delay convert-second-to-hour)]  
+                [:td {:style (format "background-color: %s;" (color-by-article k))} "  "]
+                [:td k] [:td pick-delay] [:td (-> pick-delay convert-second-to-hour)]
                         [:td drop-delay] [:td (-> drop-delay convert-second-to-hour)]
                         [:td transfer-delay] [:td (-> transfer-delay convert-second-to-hour)]])))))]
     ]
-
-  ;;[:div {:class "logo-lambdaroyal"} [:img {:src "/lambdaroyal.png"}]]
   ]))
 
-;;(render goods-flow)
 
-
+(render goods-flow)

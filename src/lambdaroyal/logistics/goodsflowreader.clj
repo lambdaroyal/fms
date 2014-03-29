@@ -6,25 +6,29 @@
 (def constants ^:const
   {:excel-file "Exceldatei"})
 
-(defn workbook [filename]
+(def ^{:doc "Contains the most recencely loaded goods flow definition"}
+  mru-goods-flow
+  (agent {}))
+
+(defn- workbook [filename]
   "gibt eines map {sheetname, sheet} zurück, die aus einem .xls File gelesen werden können"
   (let [stream (FileInputStream.
                  (File. filename))
         workbook (HSSFWorkbook. stream)
         stage1 (reduce
                  (fn [acc i]
-                   (assoc acc 
-                          (.getSheetName workbook i) 
+                   (assoc acc
+                          (.getSheetName workbook i)
                           (.getSheetAt workbook i)))
                  {} (range 0 (.getNumberOfSheets workbook)))]
     stage1))
 
-(defn zones [workbook]
+(defn- zones [workbook]
   "Liesst alle Zonen aus dem Reiter \"Topologie\" in eine Liste von Tupeln {:name ... :dx ...} "
   (if-let [tab (get workbook "Topologie")]
     (reduce
       (fn [acc i]
-        (conj acc 
+        (conj acc
                {:name (.getStringCellValue (.getCell i 0))
                 :dx (int (.getNumericCellValue (.getCell i 1)))
                 :areas []}))
@@ -36,16 +40,16 @@
               (nil?
                 (.getCell % 0)))
             (-> tab .rowIterator iterator-seq)))))
-    (throw (Exception. "Die Exceldatei enthält keinen Reiter Topologie"))))  
+    (throw (Exception. "Die Exceldatei enthält keinen Reiter Topologie"))))
 
-(defn translate-boolean [german]
+(defn- translate-boolean [german]
   "translates \"Ja\" to true"
   (and
     german
     (= "ja" (.toLowerCase german))))
 
-(defn areas [workbook]
-  "Ergänzt die Topologiemap bestehend aus Liste von Tupeln {:name ... :dx ...} 
+(defn- areas [workbook]
+  "Ergänzt die Topologiemap bestehend aus Liste von Tupeln {:name ... :dx ...}
   um eine Assoziation :areas auf Tupel {:name ... :dy ... :separated ...}"
   (let [tab (get workbook "Topologie")
         zones (zones workbook)
@@ -61,11 +65,11 @@
                                     (if (empty? current) nil current)
                                     nil)
                                   (:lru acc))]
-                      (assoc acc 
+                      (assoc acc
                             :lru lru
                             :areas (conj
                                       (:areas acc)
-                                      {:name area-name 
+                                      {:name area-name
                                       :dy area-dy
                                       :separated (translate-boolean
                                                    (.getStringCellValue (.getCell i 5)))
@@ -85,7 +89,7 @@
         ]
     stage))
 
-(defn article-groups [workbook]
+(defn- article-groups [workbook]
   "Liesst alle Artikelgruppen aus dem Reiter \"Warengruppen\" in ein Set"
   (if-let [tab (get workbook "Warengruppen")]
     (reduce
@@ -98,14 +102,14 @@
              (nil?
                (.getCell % 0)))
           (-> tab .rowIterator iterator-seq))))
-    (throw (Exception. "Die Exceldatei enthält keinen Reiter Warengruppen"))))  
+    (throw (Exception. "Die Exceldatei enthält keinen Reiter Warengruppen"))))
 
-(defn constraints-mapper [k]
+(defn- constraints-mapper [k]
   "Gibt Mappingfunktionen und Zielschlüssel für die Einträge des
   Reiters \"Darstellungsparameter\" anhand eines schlüssels k zurück"
   (get
     {"Titel" {:k :title :f #(.getStringCellValue %)}
-     "Quelle" {:k :source :f #(.getStringCellValue %)} 
+     "Quelle" {:k :source :f #(.getStringCellValue %)}
      "Ziel" {:k :sink :f #(.getStringCellValue %)}
      "Drop Zeit (s)" {:k :drop-delay :f #(.getNumericCellValue %)}
      "Pick Zeit (s)" {:k :pick-delay :f #(.getNumericCellValue %)}
@@ -118,18 +122,18 @@
      "Maximale Grösse Eingangs-/Ausgangsfluss (Pixel)" {:k :max-fan-size :f #(.getNumericCellValue %)}
      "Maximale Flussgrösse (Faktor)" {:k :max-throughtput-factor :f #(.getNumericCellValue %)}}
     k))
-     
 
 
 
-(defn constraints [workbook sheet names]
+
+(defn- constraints [workbook sheet names]
   "Liesst alle Einträge aus dem Reiter sheet und mappt die Ergebnisse mittels
   constraints-mapper auf eine map"
   (let [stage (if-let [tab (get workbook sheet)]
                 (reduce
                   (fn [acc i]
-                    (assoc 
-                      acc 
+                    (assoc
+                      acc
                       (.getStringCellValue (.getCell i 0))
                       (.getCell i 1)))
                   {}
@@ -150,7 +154,7 @@
     stage3))
 
 
-(defn goods-flow [workbook]
+(defn- goods-flow [workbook]
   "Liesst alle Warenflüsse aus dem Reiter \"Warenflüsse\" und legt diese als Map von Entries
   Warengruppe->[[bereich-von bereich-nach menge]*] zurück"
   (let [tab (get workbook "Warenflüsse")
@@ -166,11 +170,11 @@
                                     (if (empty? current) nil current)
                                     nil)
                                   (:lru acc))]
-                      (assoc 
-                        acc 
+                      (assoc
+                        acc
                         :lru lru
                         :goods-flow
-                        (assoc 
+                        (assoc
                           (:goods-flow acc)
                           lru
                           (let [existing (get (:goods-flow acc) lru)
@@ -187,6 +191,7 @@
                         (nil?
                           (.getCell % 1)))
                       (-> tab .rowIterator iterator-seq))))
+        ! (send mru-goods-flow merge (:goods-flow stage))
         ]
     (:goods-flow stage)))
 
