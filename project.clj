@@ -13,7 +13,9 @@
                  [aleph "0.3.0"]
                  [com.keminglabs/c2 "0.1.0"]
                  [org.clojure/tools.nrepl "0.2.3"]
-                 [org.lambdaroyal/clojure-util "1.0-SNAPSHOT"]]
+                 [org.lambdaroyal/clojure-util "1.0-SNAPSHOT"]
+                 [lein-light-nrepl "0.0.13"]]
+  :repl-options {:nrepl-middleware [lighttable.nrepl.handler/lighttable-ops]}
   :aot [lambdaroyal.logistics.c2server.core]
   :main lambdaroyal.logistics.c2server.core)
 
