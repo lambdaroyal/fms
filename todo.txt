@@ -1,0 +1,9 @@
+(1) wie wollen wir die bottleneck analyse machen
+
+(1) pro bereich habe ich ein- und ausgehende verbindungen in andere bereche, nun können wir pro tupel (von, nach) angeben, wieviel transportkapazität integral über einen zeitraum zur verfügung steht (z.B. 5000 Paletten pro Transportmittel, die unterscheidung transportmittel transportkapazität machen wir um anschliessend einfach "einen stapler" hinzunehmen zu können.
+
+weiterhin definieren wir eine untere schranke (global) die für einen bereich überschritten sein muss (durch irigendeinen der ein- resp ausgehenden datenflüsse), so dass die "auslastungsuhr" angezeigt wird.
+
+weiterhin definieren wir eine untere schranke ab welcher die "auslastungsuhr" rot angezeigt wird.
+
+
