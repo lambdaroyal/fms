@@ -11,100 +11,6 @@
 (def ^{:doc "used for rendering the bubbles representing the various articles in the areas"} article-colors
   ["#c04c01" "#c08301" "#c0c001" "#72c001" "#00cfae" "#0086cf" "#0556f2" "#7605f2" "#ea05f2" "white"])
 
-;; definition of goods flow
-(def goods-flow
-  {:title "Warenfluss-Visualisierung und Simulation"
-   :article-radius 10
-   :dy 2000
-   :curve-radius 10
-   :bottom-inset 150
-   :right-inset 150
-   :max-fan-size 80
-   :max-throughtput-factor 2
-   :topology
-   ;;array of zones
-   [{:name "Pool" :dx 200
-     :areas [{:name "Inbound" :dy 500 :separated true}
-             {:name "Zwischenboden" :dy 333 :separated true}
-             {:name "Unter Zwischenboden" :dy 333 :separated true}
-             {:name "Gang" :dy 334 :separated true}
-
-             {:name "Outbound" :separated true :dy 500}
-             ]}
-    {:name "Lager EG" :dx 200
-     :areas [{:name "Palettenlager EG" :dy 500}
-             {:name "Waschen" :dy 1000}
-             {:name "Abfall"}]}
-    {:name "Lift" :dx 200
-     :areas [{:name "Lift 1" :dy 500}
-             {:name " " :dy 1000}
-             {:name "Lift 2"}]}
-    {:name "Lager OG" :dx 300
-     :areas [
-             {:name "Palettenlager OG" :dy 500}
-             {:name "Palettenwenden" :dy 500 :separated true}
-             {:name "Blocklager OG" :dy 500 :separated true}
-             {:name "Beutellager" :separated true}
-             ]}
-    {:name "Produktion" :dx 300
-     :areas [
-             {:name "Abfüllerei" :dy 500 :separated true}
-             {:name "Abpackerei" :dy 1000 :separated true}
-             {:name "Blocklager"}
-             ]}
-
-    ]
-   :article-groups
-   #{"Rohwaren Dosen" "Fertigwaren" "Rohwaren Fässer" "Hilfsstoffe" "Verpackung" "Leergut Migros" "Abfall" "Leergut Fässer" "Fertigwaren Migros" "Fertigwaren Rest"}
-
-   :goods-flow
-   {"Rohwaren Fässer"
-    [["Inbound" "Palettenlager EG" 2000]
-     ["Palettenlager EG" "Waschen" 2000]
-     ["Waschen" "Lift 1" 2000]]
-    }
-
-   :goods-flow-constraints
-   {:source "Inbound"
-    :sink "Outbound"
-    :drop-delay 20
-    :pick-delay 15
-    :transfer-delay 120}
-})
-
-(comment (def goods-flow
-  {:title "";;"Warenflussanalyse Mars Roboter Fabs Inc. (Sep. 2013)"
-   :article-radius 10
-   :dy 1000
-   :topology
-   ;;array of zones
-   [{:name "pool" :dx 300
-     :areas [{:name "inbound" :dy 500 :separated true}
-             {:name "outbound" :separeted true}
-             ]}
-    {:name "lift" :dx 200
-     :areas [{:name "lift 1&2"}]}
-    {:name "förderlift" :dx 200
-     :areas [{:name "lift 3"}]}
-    {:name "commission" :dx 300
-     :areas [{:name "warm" :dy 200 :separated true}
-             {:name "kalt" :dy 400 :separated true}
-             {:name "tiefkühl" :separated true}]}]
-   :article-groups
-   #{"Betriebsstoffe" "Rohstoffe" "Werkzeuge"}
-
-   :goods-flow
-   {"Betriebsstoffe"
-    [
-      ["kalt" "tiefkühl" 10]
-      ["warm" "tiefkühl" 6]
-      ]
-    }
-   :goods-flow-constraints
-   {:source "inbound"
-    :sink "outbound"}}))
-
-
 ;;visualize optimization progress
 (def progress (ConsoleProgress. \-))
 (def progress-agent (agent 0))
@@ -129,7 +35,7 @@
     (= a b)))
 
 ;;scales the throughtput of all dataflows into [1.. :article-radius]
-(def scale-throughtput
+(defn- scale-throughtput [goods-flow]
   (let [t (map last (reduce concat (map (fn [[k v]]
                                          (map #(cons k %) v)) (:goods-flow goods-flow))))]
     (scale/linear
@@ -177,7 +83,7 @@
                       {} area-center)]
     area-center))
 
-(defn- bound-point [p]
+(defn- bound-point [goods-flow p]
   "checks whether a point is outside goods-flow topology"
   (let [dy (:dy goods-flow)
         dx (apply + (map :dx (:topology goods-flow)))
@@ -189,7 +95,7 @@
                 :else (:x p))]
     {:x x :y y}))
 
-(defn- ring [from to positiv diverge-orig]
+(defn- ring [goods-flow from to positiv diverge-orig]
  "this function calculates a rectangular path from :from to :to and returns this path as vector of points"
  (cond (and (not= (:x from) (:x to))
             (not= (:y from) (:y to)))
@@ -205,13 +111,13 @@
        (= (:y from) (:y to))
        (let [diverge (/ (- (:x from) (:x to)) diverge-orig)
              diverge (if positiv diverge (- diverge))
-             inter (bound-point {:x (:x from) :y (+ diverge (:y from))})]
-         (vec (concat [from] (ring inter to positiv diverge-orig))))
+             inter (bound-point goods-flow {:x (:x from) :y (+ diverge (:y from))})]
+         (vec (concat [from] (ring goods-flow inter to positiv diverge-orig))))
        :else
        (let [diverge (/ (- (:y from) (:y to)) diverge-orig)
              diverge (if positiv diverge (- diverge))
-             inter (bound-point {:y (:y from) :x (- (:x from) diverge)})]
-         (vec (concat [from] (ring inter to positiv diverge-orig))))))
+             inter (bound-point goods-flow {:y (:y from) :x (- (:x from) diverge)})]
+         (vec (concat [from] (ring goods-flow inter to positiv diverge-orig))))))
 
 (defn- ascent [line]
   "calcs the ascent of a line"
@@ -424,7 +330,7 @@
         r (matrix-mult m1 m2)]
     r))
 
-(defn- reference-point [line width]
+(defn- reference-point [goods-flow line width]
   "calcs a reference point on the line :line with euclidic distance (with respect to :line) of (:curve-radius goods-flow)"
   (let [m (ascent line)
         n (if (nil? m) nil (line-n line m))
@@ -467,28 +373,28 @@
         {:x x2 :y y2}))))
 
 
-(defn- ring2 [from to positive diverge]
+(defn- ring2 [goods-flow from to positive diverge]
  "this function calculates a rectangular path from a point A to a point B on the connection line :from to :to and returns this path as vector of points"
   (let [connection-length (line-length [from to])
-        reference1 (reference-point [from to] (/ connection-length diverge))
-        reference2 (reference-point [to from] (/ connection-length diverge))]
+        reference1 (reference-point goods-flow [from to] (/ connection-length diverge))
+        reference2 (reference-point goods-flow [to from] (/ connection-length diverge))]
     (concat [from]
-            (ring reference2 reference1 positive diverge)
+            (ring goods-flow reference2 reference1 positive diverge)
             [to])))
 
-(defn- trapez [from to positive diverge]
+(defn- trapez [goods-flow from to positive diverge]
   "take a line from A to B, calcs reference Point A' (A->B) and B' (B->A) and rotates the reference point (+/-)45/-45 degress"
   (let [length (line-length [from to])]
     (if
       (> length (* 5 (:article-radius goods-flow)))
-      (let [ref-from (reference-point [to from] (/ length diverge))
-          ref-to (reference-point [from to] (/ length diverge))
+      (let [ref-from (reference-point goods-flow [to from] (/ length diverge))
+          ref-to (reference-point goods-flow [from to] (/ length diverge))
           ref-from (rotation-translation ref-from (if positive (/ Math/PI 4) (- (/ Math/PI 4))) (:x from) (:y from))
           ref-to (rotation-translation ref-to (if positive (- (/ Math/PI 4)) (/ Math/PI 4)) (:x to) (:y to))]
         [from {:x (-> ref-from first first) :y (-> ref-from second first)} {:x (-> ref-to first first) :y (-> ref-to second first)} to])
       nil)))
 
-(defn- ext-rectangle [from to positive diverge]
+(defn- ext-rectangle [goods-flow from to positive diverge]
   "takes a line from A to B, calcs an rectancle that exceeds the rectangular directly spanned by from->to"
   (let [start (cond
                 (and (>= (:y from) (:y to)) (<= (:x from) (:x to))) :down
@@ -517,7 +423,7 @@
         dy {:down length :up (- length) :right 0 :left 0}
         reference1 {:x (+ (dx start) (:x from)) :y (+ (dy start) (:y from))}
         reference2 {:x (+ (dx stop) (:x to)) :y (+ (dy stop) (:y to))}]
-    (concat [from] (ring reference1 reference2 (not positive) diverge) [to])))
+    (concat [from] (ring goods-flow reference1 reference2 (not positive) diverge) [to])))
 
 (defn- article-flow-fitness [article-flow]
   "an article flow is a vec [[{}{}]..[{}{}]], of vectors each containing a line"
@@ -612,7 +518,7 @@
                                             (range (count optimized-article-flow)))]
                 optimized-article-flow))
 
-(defn- model-article-flow [xs article-flow]
+(defn- model-article-flow [goods-flow xs article-flow]
   "models an article flow using xs ({area -> {article -> {:x :y}}}) and
   article-flow which is '('(article from to amount)*).
   result is '('(article from to amount [[{:x :y}{:x :y}][{:x :y}{:x :y}{:x :y}{:x :y}]]))"
@@ -621,20 +527,20 @@
                    (let [path-straight [(get (get xs from) article) (get (get xs to) article)]
                          article-flow (reduce
                                       (fn [acc i]
-                                        (let [options [(ring (get (get xs from) article) (get (get xs to) article) true i)
-                                                       (ring (get (get xs from) article) (get (get xs to) article) false i)
-                                                       (ring2 (get (get xs from) article) (get (get xs to) article) true i)
-                                                       (ring2 (get (get xs from) article) (get (get xs to) article) false i)
-                                                       (ext-rectangle (get (get xs from) article) (get (get xs to) article) true i)
-                                                       (ext-rectangle (get (get xs from) article) (get (get xs to) article) false i)]]
+                                        (let [options [(ring goods-flow (get (get xs from) article) (get (get xs to) article) true i)
+                                                       (ring goods-flow (get (get xs from) article) (get (get xs to) article) false i)
+                                                       (ring2 goods-flow (get (get xs from) article) (get (get xs to) article) true i)
+                                                       (ring2 goods-flow (get (get xs from) article) (get (get xs to) article) false i)
+                                                       (ext-rectangle goods-flow (get (get xs from) article) (get (get xs to) article) true i)
+                                                       (ext-rectangle goods-flow (get (get xs from) article) (get (get xs to) article) false i)]]
                                           (concat acc options)))
                                       [path-straight] [5 6 7])
                          m (ascent [(get (get xs from) article) (get (get xs to) article)])
                          options (if
                                    (or (eq? 0 m) (nil? m))
                                    (concat article-flow
-                                           [(trapez (get (get xs from) article) (get (get xs to) article) true 4)
-                                            (trapez (get (get xs from) article) (get (get xs to) article) false 4)])
+                                           [(trapez goods-flow (get (get xs from) article) (get (get xs to) article) true 4)
+                                            (trapez goods-flow (get (get xs from) article) (get (get xs to) article) false 4)])
                                    article-flow)
                          ;;rounding is allowed if last line is large enought
                          options (map
@@ -664,7 +570,7 @@
         ]
     optimized-article-flow))
 
-(defn- render-arrow [color-by-article x concrete-path & args]
+(defn- render-arrow [goods-flow color-by-article x concrete-path & args]
   "renders an arrow designating to the target of a certain article flow. the shape will be triangle with equal spaced cathets,
   and min ancle size of 3/2 * scaled througthput. returns a map containing :reference as well as :arrow. :reference replaces the last point of the path"
   (let [args (if args
@@ -677,7 +583,7 @@
         width (cond
                 (:arrow-width args) (:arrow-width args)
                 (:stroke-width args) (:stroke-width args)
-                :else (* (scale-throughtput (nth x 3)) 2))
+                :else (* ((scale-throughtput goods-flow)(nth x 3)) 2))
         m (ascent last-line)
         n (if (nil? m) nil (line-n last-line m))
         ;;calc reference point on line
@@ -689,9 +595,9 @@
         ;;                             |---
         ;;
         ;;
-        reference (reference-point last-line width)
+        reference (reference-point goods-flow last-line width)
         ;;calc backward reference that is the reference point of the last curve
-        backward-reference (reference-point (vec (reverse last-line)) (:curve-radius goods-flow))
+        backward-reference (reference-point goods-flow (vec (reverse last-line)) (:curve-radius goods-flow))
         curve-frauds-arrow (>
                              (line-length [backward-reference (last concrete-path)])
                              (line-length [reference (last concrete-path)]))
@@ -743,14 +649,14 @@
       (>= (* line1-dx line2-dx) 0)
       (>= (* line1-dy line2-dy) 0))))
 
-(defn- render-article-flow-item [color-by-article x & args]
+(defn- render-article-flow-item [goods-flow color-by-article x & args]
   "renders an article flow using xs ({area -> {article -> {:x :y}}})"
   (let [select first
         ;;adjust first and last point in order to start after the source and stop right before sink
         pos1 (-> x last select first)
         posn (-> x last select last)
         pos1post (-> x last select second)
-        pos1 (reference-point [pos1post pos1] (/ (:article-radius goods-flow) 4))
+        pos1 (reference-point goods-flow [pos1post pos1] (/ (:article-radius goods-flow) 4))
         x (concat
             (drop-last x)
             [(with-meta
@@ -758,7 +664,7 @@
                  (concat [pos1] (-> x last select rest drop-last) [posn]))]
               (-> x last select meta))])
 
-        arrow (apply render-arrow color-by-article x (-> x last select) args)
+        arrow (apply render-arrow goods-flow color-by-article x (-> x last select) args)
         args (if args (apply hash-map args)
                  {})
         path (if
@@ -772,13 +678,13 @@
                      path (with-meta (reduce
                             (fn [acc index]
                               (let [preB (if (< index (-> index-path count dec))
-                                           (r2d (reference-point [(get index-path index) (get index-path (inc index))] (:curve-radius goods-flow)))
+                                           (r2d (reference-point goods-flow [(get index-path index) (get index-path (inc index))] (:curve-radius goods-flow)))
                                            nil)
                                     preA (if (> index 0)
-                                           (r2d (reference-point [(index-path (dec index)) (index-path index)] (:curve-radius goods-flow)))
+                                           (r2d (reference-point goods-flow [(index-path (dec index)) (index-path index)] (:curve-radius goods-flow)))
                                            nil)
                                     postA (if (< index (-> index-path count dec))
-                                           (r2d (reference-point [(index-path (inc index)) (index-path index)] (:curve-radius goods-flow)))
+                                           (r2d (reference-point goods-flow [(index-path (inc index)) (index-path index)] (:curve-radius goods-flow)))
                                            nil)
                                     non-monotonic
                                       (or
@@ -857,7 +763,7 @@
      :path (if (:just-arrow args) nil
              [:path {:class "flow-path" :stroke (get color-by-article (-> x first)) :d (apply str path)
               ;;3 means amount (article von nach amount [pathes])
-              :stroke-width (if (:stroke-width args) (:stroke-width args) (scale-throughtput (nth x 3)))}])}))
+              :stroke-width (if (:stroke-width args) (:stroke-width args) ((scale-throughtput goods-flow) (nth x 3)))}])}))
 
 (defn- stats-article-group [goods-flow]
   "returns pick, drop as well as transfer times for all the article groups. all time goods-flow are measured in seconds"
@@ -953,6 +859,7 @@
 
 (defn render [goods-flow]
   (let [;;scaling to visible pane
+        ! (println goods-flow)
         width 1500
         height 1000
         min-x 0
@@ -1114,7 +1021,7 @@
         scale-fan (scale/linear :domain [0 (apply max (vals fan-in-fan-out))]
                         :range [0 (:max-fan-size goods-flow)])
 
-        article-flow-model (model-article-flow article-position-by-area article-flow)
+        article-flow-model (model-article-flow goods-flow article-position-by-area article-flow)
 
         stats-article-group (stats-article-group goods-flow)
         ]
@@ -1191,7 +1098,7 @@
           [:text {:class "area-text" :x (+ 10 (:x val)) :y (+ 12 (:y val))}
             (:name val)]))
 
-      (let [paths (map (partial render-article-flow-item color-by-article)
+      (let [paths (map (partial render-article-flow-item goods-flow color-by-article)
                         article-flow-model)]
         (unify
           (reduce
@@ -1212,12 +1119,12 @@
       ;;render fan in & fan out using render-arrow [color-by-article x concrete-path]
       (let [in-center (get area-center (-> goods-flow :goods-flow-constraints :source))
             out-center (get area-center (-> goods-flow :goods-flow-constraints :sink))
-            path [(render-article-flow-item
+            path [(render-article-flow-item goods-flow
                     (assoc color-by-article :stats-in "green" :stats-out "red")
                     [:stats-in nil nil (:in fan-in-fan-out) [[{:x 0 :y (:y in-center)}{:x (+ (scale-x -10) (/ (:article-radius goods-flow) 2)) :y (:y in-center)}]]]
                     :stroke-width (scale-fan (:in fan-in-fan-out)) :arrow-width (* 1.5 (scale-fan (:in fan-in-fan-out))) :stroke-text (:in fan-in-fan-out)
                     :just-arrow true)
-                  (render-article-flow-item
+                  (render-article-flow-item goods-flow
                     (assoc color-by-article :stats-in "green" :stats-out "red")
                     [:stats-out nil nil (:out fan-in-fan-out) [[{:x (scale-x -10) :y (:y out-center)}{:x 0 :y (:y out-center)}]]]
                     :stroke-width (scale-fan (:out fan-in-fan-out)) :arrow-width (* 1.5 (scale-fan (:out fan-in-fan-out))) :stroke-text (:out fan-in-fan-out)
@@ -1354,4 +1261,3 @@
   ]))
 
 
-;;(render goods-flow)
