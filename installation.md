@@ -43,7 +43,7 @@ Creating directory fms
 Creating directory fms-temp
 Downloading the sources
 Cloning into 'fms-temp'...
-Username for 'https://github.com': gixxi
+Username for 'https://github.com': yourgithubusername
 Password for 'https://gixxi@github.com':
 remote: Counting objects: 140, done.
 remote: Compressing objects: 100% (72/72), done.
