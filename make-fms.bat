@@ -1,6 +1,6 @@
 @ECHO OFF
-set target=fsm
-set target-temp=fsm-temp
+set target=fms
+set target-temp=fms-temp
 echo Lambdaroyal FSM Installer - this script downloads and builds the software into %target%. Using 
 
 if exist %target% (
@@ -14,11 +14,10 @@ if exist %target-temp% (
 echo Creating directory %target%
 echo Creating directory %target-temp%
 
-
 echo Downloading the sources
 git clone https://github.com/lambdaroyal/fms %target-temp%
 cd %target-temp%
-echo Building fsm
+echo Building fms
 lein jar
 lein uberjar
 
