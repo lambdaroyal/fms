@@ -55,4 +55,4 @@ Building software
 Compiling lambdaroyal.logistics.c2server.core
 </pre>
 
-
+Nach ca. 2 Minuten steht dann die Software im Verzeichnis fms-temp/target (...standalone.jar) bereit.
