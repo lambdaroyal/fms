@@ -21,12 +21,6 @@ echo Building fms
 lein jar
 lein uberjar
 
-cp samples ../%target%
-cp target *standalone.jar ../%target%
-
-echo Removing directory %target%
-rmdir /S /Q %target-temp%
-
 echo Find the software in %target%
 echo You may start the software using java -jar wus-0.1-SNAPSHOT-standalone.jar --path ../samples
 pause
